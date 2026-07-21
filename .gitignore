@@ -12,3 +12,5 @@ venv/
 
 .DS_Store
 Thumbs.db
+installer/
+python-installer.exe
