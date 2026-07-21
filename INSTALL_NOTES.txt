@@ -1,0 +1,19 @@
+LocalAIChat - Installation Notes
+=================================
+
+AFTER INSTALLING:
+
+1. You also need Ollama installed and running:
+   Download from: https://ollama.com
+   Then pull a model: ollama pull qwen2.5-coder:7b
+
+2. To start the AI server automatically at login, open PowerShell
+   as Administrator and run:
+   powershell -ExecutionPolicy Bypass -File "C:\Program Files\LocalAIChat\server\Toggle-ServerAutoStart.ps1" -Enable
+
+3. Open LocalAIChat from the Start Menu or desktop shortcut.
+   First launch: open Settings and confirm Server Address is http://localhost:5000
+
+4. To connect from another PC over Tailscale:
+   Install Tailscale, log in with the same account, then set
+   Server Address to http://<this-PC-tailscale-ip>:5000
