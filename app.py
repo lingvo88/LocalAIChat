@@ -1,12 +1,5 @@
 """
 app.py - Local AI Chat brain server.
-
-One database, one personality, all devices:
-- All clients (desktop, Android, phone browser) share chat_history.db
-- System prompt lives server-side, consistent across all devices
-- AI can update its own behavior mid-conversation via [UPDATE_PROMPT: ...]
-- Long-term memory auto-injected into every new conversation
-- Web search via ddgs (DuckDuckGo, no API key needed)
 """
 
 import os
@@ -29,8 +22,6 @@ store = ChatStore(DB_PATH)
 UPDATE_PROMPT_RE = re.compile(r'\[UPDATE_PROMPT:\s*(.*?)\]', re.DOTALL)
 
 
-# ---- web search ----
-
 def web_search(query, max_results=5):
     try:
         from ddgs import DDGS
@@ -50,18 +41,14 @@ def web_search(query, max_results=5):
 def build_search_context(query, results):
     if not results:
         return None
-    lines = [f"{i + 1}. {r['title']} — {r['snippet']} ({r['url']})" for i, r in enumerate(results)]
+    lines = [f"{i+1}. {r['title']} — {r['snippet']} ({r['url']})" for i, r in enumerate(results)]
     return (
         f"Web search results for \"{query}\":\n" + "\n".join(lines) +
-        "\n\nUse these results to answer accurately and with current information. "
-        "Mention sources naturally in your answer where relevant."
+        "\n\nUse these results to answer accurately with current information. Mention sources naturally."
     )
 
 
-# ---- system prompt (server-side, shared across all devices) ----
-
 def build_system_prompt():
-    """Load the current system prompt from DB and inject long-term memory facts."""
     base = store.get_system_prompt()
     facts = store.get_memory_fact_texts()
     if not facts:
@@ -74,8 +61,6 @@ def build_system_prompt():
         f"Use this naturally, without announcing that you're reading from memory."
     )
 
-
-# ---- routes ----
 
 @app.route("/")
 def index():
@@ -94,7 +79,6 @@ def models():
 
 @app.route("/api/settings/prompt", methods=["GET", "POST"])
 def settings_prompt():
-    """Server-side system prompt — one source of truth for all devices."""
     if request.method == "POST":
         prompt = (request.json or {}).get("prompt", "").strip()
         if prompt:
@@ -106,9 +90,7 @@ def settings_prompt():
 @app.route("/api/conversations")
 def conversations():
     rows = store.list_conversations()
-    return jsonify([
-        {"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows
-    ])
+    return jsonify([{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows])
 
 
 @app.route("/api/conversations/latest")
@@ -130,7 +112,6 @@ def get_conversation(conv_id):
 def new_conversation():
     body = request.json if request.is_json else {}
     title = body.get("title", "New Chat")
-    # System prompt always comes from the server-side DB now, never the client.
     conv_id = store.create_conversation(title)
     return jsonify({"conversation_id": conv_id})
 
@@ -220,8 +201,6 @@ def chat():
     store.add_message(conv_id, "user", user_text)
     history = store.load_messages(conv_id)
 
-    # Rebuild system prompt live so memory facts are always current.
-    # Replace the stored system message with a freshly-built one for this call only.
     fresh_prompt = build_system_prompt()
     if history and history[0]["role"] == "system":
         history = [{"role": "system", "content": fresh_prompt}] + history[1:]
@@ -232,8 +211,14 @@ def chat():
         if context:
             history = history[:-1] + [{"role": "system", "content": context}, history[-1]]
 
+    # Insert placeholder immediately — server updates it every 10 chunks.
+    # Closing the app mid-stream no longer loses the response.
+    placeholder_id = store.insert_message_placeholder(conv_id, "assistant")
+
     def generate():
         full_response = ""
+        chunk_count = 0
+        save_interval = 10
         try:
             resp = requests.post(
                 f"{OLLAMA_URL}/api/chat",
@@ -248,6 +233,9 @@ def chat():
                 piece = chunk_data.get("message", {}).get("content", "")
                 if piece:
                     full_response += piece
+                    chunk_count += 1
+                    if chunk_count % save_interval == 0:
+                        store.update_message(placeholder_id, full_response)
                     yield piece
                 if chunk_data.get("done"):
                     break
@@ -255,7 +243,6 @@ def chat():
             yield f"\n[Error: {e}]"
         finally:
             if full_response:
-                # Detect and apply any self-modification token the AI emitted.
                 match = UPDATE_PROMPT_RE.search(full_response)
                 if match:
                     new_instruction = match.group(1).strip()
@@ -263,9 +250,8 @@ def chat():
                         current = store.get_system_prompt()
                         updated = current + "\n" + new_instruction
                         store.set_system_prompt(updated)
-                    # Strip the token from the displayed reply before saving.
                     full_response = UPDATE_PROMPT_RE.sub("", full_response).strip()
-                store.add_message(conv_id, "assistant", full_response)
+                store.update_message(placeholder_id, full_response)
 
     return Response(generate(), mimetype="text/plain")
 
