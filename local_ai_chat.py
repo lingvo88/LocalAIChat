@@ -8,6 +8,10 @@ import json
 import codecs
 import requests
 
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+os.environ["QT_QPA_PLATFORM"] = "windows:darkmode=2"
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QPushButton, QComboBox, QLabel, QFileDialog,
@@ -980,6 +984,9 @@ class ChatWindow(QMainWindow):
         self._ready_to_close = True
         self.close()
 
+QApplication.setHighDpiScaleFactorRoundingPolicy(
+    Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+)
 
 def main():
     app = QApplication(sys.argv)
