@@ -1,0 +1,14 @@
+﻿build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+chat_history.db
+chat_history_backup.db
+
+venv/
+.venv/
+
+.DS_Store
+Thumbs.db

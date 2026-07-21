@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#111318">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" href="/static/icon-192.png">
+<title>Local AI Chat</title>
+<style>
+  :root {
+    --bg: #111318;
+    --panel: #1a1d24;
+    --bubble-user: #2a5d9c;
+    --bubble-ai: #23262e;
+    --text: #e8e8ea;
+    --muted: #8a8f98;
+    --accent: #4a90e2;
+    --danger: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 10px 12px;
+    background: var(--panel);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    border-bottom: 1px solid #2a2d35;
+    flex-wrap: wrap;
+  }
+  select, button {
+    background: #23262e;
+    color: var(--text);
+    border: 1px solid #333640;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 14px;
+  }
+  button { cursor: pointer; }
+  button:active { opacity: 0.7; }
+  #stopBtn { color: var(--danger); border-color: var(--danger); display: none; }
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .user { align-self: flex-end; background: var(--bubble-user); border-bottom-right-radius: 4px; }
+  .ai { align-self: flex-start; background: var(--bubble-ai); border-bottom-left-radius: 4px; }
+  .system-note { align-self: center; color: var(--muted); font-size: 12px; font-style: italic; }
+  footer {
+    padding: 10px;
+    background: var(--panel);
+    display: flex;
+    gap: 8px;
+    border-top: 1px solid #2a2d35;
+  }
+  #input {
+    flex: 1;
+    background: #23262e;
+    color: var(--text);
+    border: 1px solid #333640;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 15px;
+    resize: none;
+    max-height: 120px;
+  }
+  #sendBtn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0 18px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <select id="modelSelect"></select>
+  <button id="newChatBtn">New Chat</button>
+  <button id="loadChatBtn">History</button>
+  <button id="stopBtn">Stop</button>
+</header>
+
+<div id="chat"></div>
+
+<footer>
+  <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
+  <button id="sendBtn">Send</button>
+</footer>
+
+<script>
+let conversationId = null;
+let currentModel = null;
+let controller = null;
+
+const chatEl = document.getElementById('chat');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('sendBtn');
+const stopBtn = document.getElementById('stopBtn');
+const modelSelect = document.getElementById('modelSelect');
+const newChatBtn = document.getElementById('newChatBtn');
+const loadChatBtn = document.getElementById('loadChatBtn');
+
+function addBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = 'bubble ' + (role === 'user' ? 'user' : 'ai');
+  div.textContent = text;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+
+function addNote(text) {
+  const div = document.createElement('div');
+  div.className = 'system-note';
+  div.textContent = text;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function loadModels() {
+  const res = await fetch('/api/models');
+  const data = await res.json();
+  modelSelect.innerHTML = '';
+  if (!data.models || data.models.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = 'No models found';
+    modelSelect.appendChild(opt);
+    return;
+  }
+  data.models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    modelSelect.appendChild(opt);
+  });
+  currentModel = modelSelect.value;
+}
+
+modelSelect.addEventListener('change', () => currentModel = modelSelect.value);
+
+async function loadLatest() {
+  const res = await fetch('/api/conversations/latest');
+  const data = await res.json();
+  conversationId = data.conversation_id;
+  chatEl.innerHTML = '';
+  data.messages.forEach(m => addBubble(m.role, m.content));
+  if (data.messages.length > 0) addNote('Resumed previous conversation');
+}
+
+newChatBtn.addEventListener('click', async () => {
+  const res = await fetch('/api/conversations/new', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title: 'Chat ' + new Date().toLocaleString()})
+  });
+  const data = await res.json();
+  conversationId = data.conversation_id;
+  chatEl.innerHTML = '';
+  addNote('New chat started');
+});
+
+loadChatBtn.addEventListener('click', async () => {
+  const res = await fetch('/api/conversations');
+  const list = await res.json();
+  if (list.length === 0) { alert('No saved conversations yet.'); return; }
+  const lines = list.map((c, i) => `${i + 1}. ${c.title} (${c.updated_at.slice(0,16).replace('T',' ')})`);
+  const choice = prompt('Pick a conversation number:\n' + lines.join('\n'));
+  const idx = parseInt(choice, 10) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= list.length) return;
+  const convRes = await fetch('/api/conversations/' + list[idx].id);
+  const convData = await convRes.json();
+  conversationId = convData.conversation_id;
+  chatEl.innerHTML = '';
+  convData.messages.forEach(m => addBubble(m.role, m.content));
+});
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || !conversationId || !currentModel) return;
+
+  addBubble('user', text);
+  inputEl.value = '';
+  const aiBubble = addBubble('ai', '');
+
+  sendBtn.disabled = true;
+  stopBtn.style.display = 'inline-block';
+  controller = new AbortController();
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({conversation_id: conversationId, message: text, model: currentModel}),
+      signal: controller.signal
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      aiBubble.textContent += decoder.decode(value, {stream: true});
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      aiBubble.textContent += '\n[Error: ' + e.message + ']';
+    } else {
+      aiBubble.textContent += '\n[stopped]';
+    }
+  } finally {
+    sendBtn.disabled = false;
+    stopBtn.style.display = 'none';
+    controller = null;
+  }
+}
+
+stopBtn.addEventListener('click', () => {
+  if (controller) controller.abort();
+});
+
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+(async function init() {
+  await loadModels();
+  await loadLatest();
+})();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  });
+}
+</script>
+
+</body>
+</html>
